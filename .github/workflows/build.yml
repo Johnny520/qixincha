@@ -1,15 +1,11 @@
 name: Build APK
 
-# 触发：
-#   1) 推送 v* 标签（如 v1.0.0）→ 自动编译并把 APK 发布到 Release（永久直链）
-#   2) 手动在 Actions 页点 Run workflow → 仅编译并存为 Artifact（调试用，不发布）
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
 
-# 发布 Release 需要写仓库内容的权限
 permissions:
   contents: write
 
@@ -34,32 +30,27 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y zip unzip git
+          sudo apt-get install -y zip unzip git libltdl-dev
 
       - name: Install buildozer
-        # cython 固定 0.29.x 以兼容 kivy 2.3.1 编译（cython 3.0+ 会破坏 kivy 编译）
         run: pip install buildozer cython==0.29.33
 
       - name: Build APK (buildozer)
         run: buildozer android debug
 
-      - name: Upload APK (artifact, 仅手动触发时)
+      - name: Upload APK (artifact, debug only)
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: qixincha-apk
           path: bin/*.apk
 
-      - name: Release APK (永久直链，仅在打 tag 时)
+      - name: Release APK (permanent link, tag only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: bin/*.apk
           name: 企信查 ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
-          body: |
-            企信查 APK 自动构建产物（Android 12–16）
-            包名：com.qxx.johnny
-            架构：arm64-v8a / armeabi-v7a
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
