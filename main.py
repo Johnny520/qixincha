@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """企信查 - 天眼查风格企业信息查询 App (Kivy)。
-蓝系配色 + 底部4Tab导航 + 列表式设置页 + 空状态引导 + 文字自适应。
+蓝系配色 + 底部4Tab导航 + 列表式设置页 + 空状态引导 + 全自适应。
+v1.2.0 - 修复闪退 + 全布局自适应 + release构建
 """
 import os
 import threading
@@ -8,6 +9,7 @@ import threading
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.core.window import Window
+from kivy.graphics import Color, Rectangle
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.screenmanager import ScreenManager, Screen, SlideTransition
 from kivy.uix.boxlayout import BoxLayout
@@ -19,23 +21,22 @@ from data_sources import search_company, get_company_detail, JUHE_DIMENSIONS
 import legal
 import ui
 from ui import (FONT, PALETTE, C, CuteButton, CuteCard, CuteInput,
-                CuteLabel, SettingRow, NavTab,
-                info_popup, confirm_popup)
+                CuteLabel, info_popup, confirm_popup, edit_popup, _font_kw)
 
-WW = Window.width  # 全局窗口宽度，避免 self.width=0 截断
-
-# ---- 可点击圆角卡片 ----
+# ── 全局 ──
 class TapCard(ButtonBehavior, CuteCard):
+    """可点击圆角卡片（搜索结果项）。"""
     def __init__(self, **kw):
         super().__init__(**kw)
 
 
 def lab(text, **kw):
-    kw.setdefault("font_name", FONT)
+    """创建自适应 Label：自动设置字体、颜色、对齐。"""
     kw.setdefault("color", C(PALETTE["text"]))
     kw.setdefault("halign", "left")
     kw.setdefault("valign", "top")
-    return Label(text=text, **kw)
+    fkw = _font_kw(**kw)
+    return Label(text=text, **fkw)
 
 
 EMOJI = {
@@ -52,38 +53,36 @@ EMOJI = {
     "qualification": "🏅", "random_check": "🔍",
 }
 
-HOT_KEYWORDS = ["腾讯", "阿里巴巴", "华为", "字节跳动", "百度", "京东", "美团", "小米", "比亚迪", "中国平安"]
+HOT_KW = ["腾讯", "阿里巴巴", "华为", "字节跳动", "百度",
+           "京东", "美团", "小米", "比亚迪", "中国平安"]
 
 def _mark_agreed():
     set_key("agreed_disclaimer", True)
 
 
-# ──────────────────────────
+# ═══════════════════════════
 #  搜索页 (Tab 1)
-# ──────────────────────────
+# ═══════════════════════════
 class SearchScreen(Screen):
     def __init__(self, **kw):
         super().__init__(**kw)
         self.name = "search"
-        root = BoxLayout(orientation="vertical", padding=[8, 10, 8, 0], spacing=6)
+        root = BoxLayout(orientation="vertical", padding=[8, 8, 8, 0], spacing=6)
 
-        # 顶部蓝色标题栏
-        hdr = BoxLayout(size_hint_y=None, height=50, padding=[12, 8])
-        hdr_lbl = lab("🔍 企信查", font_size=22, bold=True,
-                       color=C(PALETTE["primary_d"]), halign="left", valign="middle")
-        hdr_lbl.bind(texture_size=lambda i, s: setattr(i, "height", max(s[1], 40)))
-        hdr.add_widget(hdr_lbl)
-        sub_lbl = lab("企业信息查询", font_size=12,
-                       color=C(PALETTE["sub"]), halign="right", valign="middle")
-        hdr.add_widget(sub_lbl)
+        # ── 标题 ──
+        hdr = BoxLayout(size_hint_y=None, height=48, padding=[12, 6])
+        hdr.add_widget(lab("🔍 企信查", font_size=20, bold=True,
+                           color=C(PALETTE["primary_d"]), halign="left", valign="middle"))
+        hdr.add_widget(lab("企业信息查询", font_size=12,
+                           color=C(PALETTE["sub"]), halign="right", valign="middle"))
         root.add_widget(hdr)
 
-        # 搜索条（蓝底卡片）
-        bar = BoxLayout(size_hint_y=None, height=52, spacing=8)
+        # ── 搜索条 ──
+        bar = BoxLayout(size_hint_y=None, height=50, spacing=8)
         self.inp = CuteInput(hint_text="输入企业名称，如：腾讯",
                              size_hint_x=0.7, multiline=False)
         self.inp.bind(on_text_validate=lambda x: self.do_search())
-        sbtn = CuteButton(text="🔍", size_hint_x=0.3, height=46,
+        sbtn = CuteButton(text="🔍", size_hint_x=0.3,
                           bg=C(PALETTE["primary"]), radius=14)
         sbtn.bind(on_press=lambda x: self.do_search())
         bar.add_widget(self.inp)
@@ -94,7 +93,7 @@ class SearchScreen(Screen):
                           size_hint_y=None, height=20)
         root.add_widget(self.status)
 
-        # 内容区（ScrollView）
+        # ── ScrollView ──
         self.sv = ScrollView()
         self.results = BoxLayout(orientation="vertical", size_hint_y=None,
                                  spacing=8, padding=2)
@@ -102,39 +101,37 @@ class SearchScreen(Screen):
         self.sv.add_widget(self.results)
         root.add_widget(self.sv)
 
-        # 空状态引导（未搜索时显示热门搜索）
-        self.empty_guide = BoxLayout(orientation="vertical", spacing=10, padding=[10, 8])
+        # ── 空状态引导（热门搜索） ──
+        self.empty_guide = BoxLayout(orientation="vertical", spacing=8, padding=[8, 6])
         guide_lbl = lab("💡 热门搜索", font_size=16, bold=True,
                         color=C(PALETTE["primary_d"]), halign="center", valign="middle",
                         size_hint_y=None, height=28)
         self.empty_guide.add_widget(guide_lbl)
-        # 热门搜索标签（2列网格）
-        tag_grid = BoxLayout(orientation="vertical", spacing=6, size_hint_y=None)
-        tag_grid.bind(minimum_height=tag_grid.setter("height"))
-        row1 = BoxLayout(spacing=6, size_hint_y=None, height=38)
-        row2 = BoxLayout(spacing=6, size_hint_y=None, height=38)
-        for i, kw in enumerate(HOT_KEYWORDS):
+        # 两行标签
+        r1 = BoxLayout(spacing=6, size_hint_y=None, height=36)
+        r2 = BoxLayout(spacing=6, size_hint_y=None, height=36)
+        for i, kw in enumerate(HOT_KW):
             chip = CuteButton(text=kw, font_size=13,
-                              bg=C(PALETTE["chip"]), radius=12, height=34,
+                              bg=C(PALETTE["chip"]), radius=12,
                               color=C(PALETTE["primary_d"]))
-            chip.bind(on_press=lambda x, k=kw: self._quick_search(k))
+            chip.bind(on_press=lambda x, k=kw: self._quick(k))
             if i < 5:
-                row1.add_widget(chip)
+                r1.add_widget(chip)
             else:
-                row2.add_widget(chip)
-        tag_grid.add_widget(row1)
-        tag_grid.add_widget(row2)
-        self.empty_guide.add_widget(tag_grid)
-        tip = lab("搜索企业名称即可查看工商/股东/变更等31维度信息",
+                r2.add_widget(chip)
+        self.empty_guide.add_widget(r1)
+        self.empty_guide.add_widget(r2)
+        tip = lab("搜索企业名即可查看工商/股东/变更等31维度信息",
                   font_size=12, color=C(PALETTE["sub"]), halign="center",
-                  size_hint_y=None, height=22)
+                  size_hint_y=None, height=20)
         tip.bind(width=lambda i, w: setattr(tip, "text_size", (w, None)))
         self.empty_guide.add_widget(tip)
-        self.sv.add_widget(self.empty_guide)
+        self.results.add_widget(self.empty_guide)
+        self._guide_visible = True
 
         self.add_widget(root)
 
-    def _quick_search(self, kw):
+    def _quick(self, kw):
         self.inp.text = kw
         self.do_search()
 
@@ -142,7 +139,10 @@ class SearchScreen(Screen):
         kw = self.inp.text.strip()
         if not kw:
             return
-        self.sv.remove_widget(self.empty_guide)
+        # 移除空状态引导（安全：只移一次）
+        if self._guide_visible:
+            self.sv.remove_widget(self.empty_guide)
+            self._guide_visible = False
         self.status.text = "🔄 查询中…"
         self.clear_results()
         threading.Thread(target=self._search, args=(kw,), daemon=True).start()
@@ -164,63 +164,57 @@ class SearchScreen(Screen):
             self.status.text = f"😢 错误：{err}"
             return
         if not items:
-            self.status.text = "未找到结果。可在「我的」配置 API key，或确认企业名称。"
+            self.status.text = "未找到结果。可在「我的」配置 API key。"
             return
         self.status.text = f"🎉 共 {len(items)} 条结果"
         for it in items:
-            self.results.add_widget(self._result_card(
-                it.get("name", ""), it.get("credit_code", "")))
+            self.results.add_widget(self._card(it.get("name", ""), it.get("credit_code", "")))
 
-    def _result_card(self, name, code):
+    def _card(self, name, code):
         card = TapCard(padding=[14, 10], spacing=4, size_hint_y=None)
         card.bind(minimum_height=card.setter("height"))
-        n_lbl = lab(f"🏢 {name}", font_size=16, bold=True,
-                    color=C(PALETTE["text"]),
-                    size_hint_y=None, height=26)
-        n_lbl.bind(width=lambda i, w: setattr(n_lbl, "text_size", (w, None)))
-        card.add_widget(n_lbl)
+        n = lab(f"🏢 {name}", font_size=16, bold=True,
+                size_hint_y=None, height=26)
+        n.bind(width=lambda i, w: setattr(n, "text_size", (w, None)))
+        card.add_widget(n)
         if code:
-            c_lbl = lab(f"统一信用代码：{code}", font_size=13,
-                        color=C(PALETTE["sub"]),
-                        size_hint_y=None, height=20)
-            c_lbl.bind(width=lambda i, w: setattr(c_lbl, "text_size", (w, None)))
-            card.add_widget(c_lbl)
+            c = lab(f"统一信用代码：{code}", font_size=13, color=C(PALETTE["sub"]),
+                    size_hint_y=None, height=20)
+            c.bind(width=lambda i, w: setattr(c, "text_size", (w, None)))
+            card.add_widget(c)
         card.bind(on_press=lambda x: self.goto_detail(name))
         return card
 
     def goto_detail(self, name):
         self.manager.get_screen("detail").show(name)
+        self.manager.current = "detail"
 
 
-# ──────────────────────────
-#  关注页 (Tab 2) - 空状态
-# ──────────────────────────
+# ═══════════════════════════
+#  关注页 (Tab 2)
+# ═══════════════════════════
 class FollowScreen(Screen):
     def __init__(self, **kw):
         super().__init__(**kw)
         self.name = "follow"
         root = BoxLayout(orientation="vertical", padding=[0, 10, 0, 0])
-        # 标题栏
         hdr = BoxLayout(size_hint_y=None, height=46, padding=[16, 8])
         hdr.add_widget(lab("⭐ 关注企业", font_size=20, bold=True,
-                           color=C(PALETTE["text"]), halign="left", valign="middle"))
-        count = lab("0/50", font_size=13, color=C(PALETTE["sub"]),
-                    halign="right", valign="middle")
-        hdr.add_widget(count)
+                           halign="left", valign="middle"))
+        hdr.add_widget(lab("0/50", font_size=13, color=C(PALETTE["sub"]),
+                           halign="right", valign="middle"))
         root.add_widget(hdr)
         # 空状态
-        empty = BoxLayout(orientation="vertical", padding=[30, 40])
-        star = lab("⭐", font_size=48, halign="center", valign="middle",
-                   color=C(PALETTE["sun"]), size_hint_y=None, height=70)
-        empty.add_widget(star)
-        tip1 = lab("暂无关注企业", font_size=18, bold=True,
-                   color=C(PALETTE["text"]), halign="center", size_hint_y=None, height=30)
-        empty.add_widget(tip1)
-        tip2 = lab("在企业详情页点击收藏按钮，即可加入关注列表",
-                   font_size=13, color=C(PALETTE["sub"]), halign="center",
-                   size_hint_y=None, height=26)
-        tip2.bind(width=lambda i, w: setattr(tip2, "text_size", (w, None)))
-        empty.add_widget(tip2)
+        empty = BoxLayout(orientation="vertical", padding=[30, 30])
+        empty.add_widget(lab("⭐", font_size=48, halign="center", valign="middle",
+                             color=C(PALETTE["sun"]), size_hint_y=None, height=64))
+        empty.add_widget(lab("暂无关注企业", font_size=18, bold=True,
+                             halign="center", size_hint_y=None, height=30))
+        t2 = lab("在企业详情页点击收藏按钮，即可加入关注列表",
+                 font_size=13, color=C(PALETTE["sub"]), halign="center",
+                 size_hint_y=None, height=24)
+        t2.bind(width=lambda i, w: setattr(t2, "text_size", (w, None)))
+        empty.add_widget(t2)
         gbtn = CuteButton(text="🔍 去搜索企业", bg=C(PALETTE["primary"]),
                           size_hint=(0.6, None), height=44, radius=14)
         gbtn.bind(on_press=lambda x: setattr(self.manager, "current", "search"))
@@ -229,9 +223,9 @@ class FollowScreen(Screen):
         self.add_widget(root)
 
 
-# ──────────────────────────
-#  对比页 (Tab 3) - 空状态
-# ──────────────────────────
+# ═══════════════════════════
+#  对比页 (Tab 3)
+# ═══════════════════════════
 class CompareScreen(Screen):
     def __init__(self, **kw):
         super().__init__(**kw)
@@ -239,23 +233,19 @@ class CompareScreen(Screen):
         root = BoxLayout(orientation="vertical", padding=[0, 10, 0, 0])
         hdr = BoxLayout(size_hint_y=None, height=46, padding=[16, 8])
         hdr.add_widget(lab("📊 企业对比", font_size=20, bold=True,
-                           color=C(PALETTE["text"]), halign="left", valign="middle"))
-        count = lab("0/5", font_size=13, color=C(PALETTE["sub"]),
-                    halign="right", valign="middle")
-        hdr.add_widget(count)
+                           halign="left", valign="middle"))
+        hdr.add_widget(lab("0/5", font_size=13, color=C(PALETTE["sub"]),
+                           halign="right", valign="middle"))
         root.add_widget(hdr)
-        empty = BoxLayout(orientation="vertical", padding=[30, 40])
-        chart = lab("📊", font_size=48, halign="center", valign="middle",
-                    color=C(PALETTE["lavender"]), size_hint_y=None, height=70)
-        empty.add_widget(chart)
-        tip1 = lab("暂无对比企业", font_size=18, bold=True,
-                   color=C(PALETTE["text"]), halign="center", size_hint_y=None, height=30)
-        empty.add_widget(tip1)
-        tip2 = lab("最多同时对比5家企业，在企业详情页点击「加入对比」",
-                   font_size=13, color=C(PALETTE["sub"]), halign="center",
-                   size_hint_y=None, height=26)
-        tip2.bind(width=lambda i, w: setattr(tip2, "text_size", (w, None)))
-        empty.add_widget(tip2)
+        empty = BoxLayout(orientation="vertical", padding=[30, 30])
+        empty.add_widget(lab("📊", font_size=48, halign="center", valign="middle",
+                             color=C(PALETTE["lavender"]), size_hint_y=None, height=64))
+        empty.add_widget(lab("暂无对比企业", font_size=18, bold=True,
+                             halign="center", size_hint_y=None, height=30))
+        t2 = lab("最多同时对比5家企业", font_size=13, color=C(PALETTE["sub"]),
+                 halign="center", size_hint_y=None, height=24)
+        t2.bind(width=lambda i, w: setattr(t2, "text_size", (w, None)))
+        empty.add_widget(t2)
         gbtn = CuteButton(text="🔍 去搜索企业", bg=C(PALETTE["primary"]),
                           size_hint=(0.6, None), height=44, radius=14)
         gbtn.bind(on_press=lambda x: setattr(self.manager, "current", "search"))
@@ -264,165 +254,144 @@ class CompareScreen(Screen):
         self.add_widget(root)
 
 
-# ──────────────────────────
-#  我的页 (Tab 4) - 天眼查风格列表式
-# ──────────────────────────
+# ═══════════════════════════
+#  我的页 (Tab 4) - 列表式
+# ═══════════════════════════
 class ProfileScreen(Screen):
     def __init__(self, **kw):
         super().__init__(**kw)
         self.name = "profile"
+        self.scrape_on = bool(load_config().get("enable_scrape", True))
+        self._build_ui()
+
+    def _build_ui(self):
+        """构建UI，支持刷新时安全重建（不remove_widget）。"""
+        # 清除旧内容
+        self.clear_widgets()
         root = BoxLayout(orientation="vertical", padding=0, spacing=0)
-        # 标题栏
+
         hdr = BoxLayout(size_hint_y=None, height=46, padding=[16, 8])
         hdr.add_widget(lab("👤 我的", font_size=20, bold=True,
-                           color=C(PALETTE["text"]), halign="left", valign="middle"))
+                           halign="left", valign="middle"))
         root.add_widget(hdr)
 
         sv = ScrollView()
-        inner = BoxLayout(orientation="vertical", size_hint_y=None, spacing=0)
+        inner = BoxLayout(orientation="vertical", size_hint_y=None, spacing=0,
+                          padding=[0, 4])
         inner.bind(minimum_height=inner.setter("height"))
 
         cfg = load_config()
+        W = inner.add_widget
 
         # ── 数据源配置 ──
-        src_section = self._section_title("📡  数据源配置")
-        inner.add_widget(src_section)
-        inner.add_widget(self._setting_row("API密钥管理", "配置6个免费数据源key", ">", self._go_api))
-        inner.add_widget(self._setting_row("自定义数据源", "接入你自己的API接口", ">", self._go_custom))
-        inner.add_widget(self._setting_row("免费爬虫兜底", "开启" if cfg.get("enable_scrape", True) else "关闭", ">", self._toggle_scrape_row))
-        inner.add_widget(self._divider())
+        W(self._sec("📡  数据源配置"))
+        W(self._row("API密钥管理", "配置6个免费数据源key", ">", self._go_api))
+        W(self._row("自定义数据源", "接入你自己的API接口", ">", self._go_custom))
+        scrape_txt = "开启" if self.scrape_on else "关闭"
+        W(self._row("免费爬虫兜底", scrape_txt, ">", self._toggle_scrape))
+        W(self._gap())
 
         # ── 缓存与高级 ──
-        adv_section = self._section_title("🛠  缓存与高级")
-        inner.add_widget(adv_section)
-        inner.add_widget(self._setting_row("清空本地缓存", "删除所有已缓存的企业数据", ">", self._clear_cache))
-        inner.add_widget(self._setting_row("请求超时", f"{cfg.get('timeout', 10)}秒", ">", self._go_timeout))
-        inner.add_widget(self._setting_row("缓存有效期", f"{cfg.get('cache_days', 30)}天", ">", self._go_cache_days))
-        inner.add_widget(self._divider())
+        W(self._sec("🛠  缓存与高级"))
+        W(self._row("清空本地缓存", "删除所有缓存数据", ">", self._clear_cache))
+        W(self._row("请求超时", f"{cfg.get('timeout', 10)}秒", ">", self._edit_timeout))
+        W(self._row("缓存有效期", f"{cfg.get('cache_days', 30)}天", ">", self._edit_cache_days))
+        W(self._gap())
 
         # ── 协议与关于 ──
-        about_section = self._section_title("📜  协议与关于")
-        inner.add_widget(about_section)
-        inner.add_widget(self._setting_row("关于企信查", f"v1.1.0  com.qxx.johnny", ">", self._show_about))
-        inner.add_widget(self._setting_row("用户协议", "", ">", self._show_agreement))
-        inner.add_widget(self._setting_row("隐私政策", "", ">", self._show_privacy))
-        inner.add_widget(self._setting_row("免责声明", "数据来源说明", ">", self._show_disclaimer))
-        inner.add_widget(self._divider())
+        W(self._sec("📜  协议与关于"))
+        W(self._row("关于企信查", "v1.2.0  com.qxx.johnny", ">", self._show_about))
+        W(self._row("用户协议", "", ">", self._show_agreement))
+        W(self._row("隐私政策", "", ">", self._show_privacy))
+        W(self._row("免责声明", "数据来源说明", ">", self._show_disclaimer))
+        W(self._gap())
 
-        # ── 开发者信息 ──
-        dev_section = self._section_title("👨‍💻  开发者")
-        inner.add_widget(dev_section)
-        inner.add_widget(self._setting_row("开发者", legal.AUTHOR, ""))
-        inner.add_widget(self._setting_row("微信", legal.WECHAT, ""))
-        inner.add_widget(self._setting_row("邮箱", legal.EMAIL, ""))
-        inner.add_widget(self._setting_row("版权", f"© {legal.COPYRIGHT_YEAR} 企信查", ""))
-        inner.add_widget(BoxLayout(size_hint_y=None, height=20))  # 底部间距
+        # ── 开发者 ──
+        W(self._sec("👨‍💻  开发者"))
+        W(self._row("开发者", legal.AUTHOR, ""))
+        W(self._row("微信", legal.WECHAT, ""))
+        W(self._row("邮箱", legal.EMAIL, ""))
+        W(self._row("版权", f"© {legal.COPYRIGHT_YEAR} 企信查", ""))
+        W(BoxLayout(size_hint_y=None, height=30))
 
         sv.add_widget(inner)
         root.add_widget(sv)
         self.add_widget(root)
 
-        self.scrape_on = bool(cfg.get("enable_scrape", True))
-
-    # ── UI 工具 ──
-    def _section_title(self, text):
-        bl = BoxLayout(size_hint_y=None, height=38, padding=[16, 10])
-        lbl = lab(text, font_size=14, bold=True, color=C(PALETTE["primary_d"]),
-                  halign="left", valign="middle")
-        bl.add_widget(lbl)
+    # ── 行组件 ──
+    def _sec(self, text):
+        bl = BoxLayout(size_hint_y=None, height=36, padding=[16, 8])
+        bl.add_widget(lab(text, font_size=14, bold=True,
+                          color=C(PALETTE["primary_d"]), halign="left", valign="middle"))
         return bl
 
-    def _divider(self):
-        bl = BoxLayout(size_hint_y=None, height=10, padding=[16, 5])
-        bl.canvas.before.clear()  # 不画背景，纯间距
-        return bl
+    def _gap(self):
+        return BoxLayout(size_hint_y=None, height=10)
 
-    def _setting_row(self, title, subtitle="", right="", on_tap=None):
+    def _row(self, title, sub="", right="", on_tap=None):
         bl = BoxLayout(orientation="horizontal", size_hint_y=None, height=50,
                        padding=[16, 6, 16, 6])
         # 左侧
         left = BoxLayout(orientation="vertical", size_hint_x=0.65)
-        t = lab(title, font_size=15, color=C(PALETTE["text"]),
-                halign="left", valign="middle", size_hint_y=None, height=24)
-        t.bind(texture_size=lambda i, s: setattr(i, "height", s[1]))
+        t = lab(title, font_size=15, halign="left", valign="middle",
+                size_hint_y=None, height=24)
+        t.bind(texture_size=lambda i, s: setattr(i, "height", max(s[1], 20)))
         left.bind(width=lambda i, w: setattr(t, "text_size", (w, None)))
         left.add_widget(t)
-        if subtitle:
-            s = lab(subtitle, font_size=12, color=C(PALETTE["sub"]),
-                    halign="left", valign="middle", size_hint_y=None, height=20)
-            s.bind(texture_size=lambda i, v: setattr(i, "height", v[1]))
+        if sub:
+            s = lab(sub, font_size=12, color=C(PALETTE["sub"]),
+                    halign="left", valign="middle", size_hint_y=None, height=18)
+            s.bind(texture_size=lambda i, v: setattr(i, "height", max(v[1], 16)))
             left.bind(width=lambda i, w: setattr(s, "text_size", (w, None)))
             left.add_widget(s)
         bl.add_widget(left)
         # 右侧
         r = lab(right, font_size=13, color=C(PALETTE["sub"]),
                 halign="right", valign="middle", size_hint_x=0.35)
-        r.bind(texture_size=lambda i, v: None)
         bl.add_widget(r)
-        # 点击
+        # 点击（用 ButtonBehavior 安全方式）
         if on_tap:
-            def _on_touch(inst, touch):
-                if inst.collide_point(*touch.pos):
+            def _tap(inst, touch):
+                if inst.collide_point(*touch.pos) and not touch.is_mouse_scrolling:
                     on_tap()
-            bl.bind(on_touch_down=_on_touch)
+                    return True  # 消费触摸事件，防止穿透
+            bl.bind(on_touch_down=_tap)
         return bl
 
-    # ── 导航 ──
+    # ── 操作（不再 remove_widget self！安全刷新） ──
     def _go_api(self):
         self.manager.current = "api_config"
 
     def _go_custom(self):
         self.manager.current = "custom_config"
 
-    def _go_timeout(self):
-        self._edit_field_popup("请求超时(秒)", "timeout")
-
-    def _go_cache_days(self):
-        self._edit_field_popup("缓存有效期(天)", "cache_days")
-
-    def _edit_field_popup(self, title, key):
-        cfg = load_config()
-        cur = str(cfg.get(key, ""))
-        lay = BoxLayout(orientation="vertical", spacing=12, padding=14)
-        inp = CuteInput(text=cur, multiline=False, size_hint_y=None, height=46)
-        lay.add_widget(inp)
-        btn_row = BoxLayout(size_hint_y=None, height=46, spacing=10)
-        cancel = CuteButton(text="取消", bg=C(PALETTE["sub"]), radius=14)
-        save_btn = CuteButton(text="保存", bg=C(PALETTE["primary"]), radius=14)
-        btn_row.add_widget(cancel)
-        btn_row.add_widget(save_btn)
-        lay.add_widget(btn_row)
-        popup = Popup(title=title, content=lay, size_hint=(0.85, 0.45),
-                      auto_dismiss=False, title_font=FONT,
-                      title_color=C(PALETTE["text"]),
-                      background_color=C(PALETTE["bg"]))
-        popup.separator_color = C(PALETTE["line"])
-        cancel.bind(on_press=lambda x: popup.dismiss())
-        def _save(*a):
-            v = inp.text.strip()
-            if v.isdigit():
-                set_key(key, int(v))
-            popup.dismiss()
-            info_popup("保存成功", f"✅ {title} 已更新为 {v}", emoji="✅")
-            # 刷新当前页
-            self.manager.remove_widget(self)
-            self.manager.add_widget(ProfileScreen())
-            self.manager.current = "profile"
-        save_btn.bind(on_press=_save)
-        popup.open()
-
-    # ── 爬虫开关 ──
-    def _toggle_scrape_row(self):
+    def _toggle_scrape(self):
         self.scrape_on = not self.scrape_on
         set_key("enable_scrape", self.scrape_on)
+        # 安全刷新：直接重建UI（不remove_widget）
+        self._build_ui()
         info_popup("爬虫兜底",
-                   f"免费网页抓取兜底：{'开启' if self.scrape_on else '关闭'}",
+                   f"免费网页抓取兜底：{'开启 ✅' if self.scrape_on else '关闭 ❌'}",
                    emoji="🕷")
-        self.manager.remove_widget(self)
-        self.manager.add_widget(ProfileScreen())
-        self.manager.current = "profile"
 
-    # ── 缓存清空 ──
+    def _edit_timeout(self):
+        cur = str(load_config().get("timeout", 10))
+        def _save(v):
+            if v.isdigit():
+                set_key("timeout", int(v))
+            self._build_ui()
+            info_popup("保存成功", f"✅ 请求超时已更新为 {v}秒", emoji="✅")
+        edit_popup("请求超时(秒)", cur, _save, input_type="number")
+
+    def _edit_cache_days(self):
+        cur = str(load_config().get("cache_days", 30))
+        def _save(v):
+            if v.isdigit():
+                set_key("cache_days", int(v))
+            self._build_ui()
+            info_popup("保存成功", f"✅ 缓存有效期已更新为 {v}天", emoji="✅")
+        edit_popup("缓存有效期(天)", cur, _save, input_type="number")
+
     def _clear_cache(self):
         def _do():
             try:
@@ -434,10 +403,9 @@ class ProfileScreen(Screen):
         confirm_popup("清空缓存", "确定要清空全部本地缓存吗？",
                       yes_text="确定清空", on_yes=_do, emoji="🧹")
 
-    # ── 弹窗 ──
     def _show_about(self):
         info_popup("关于企信查",
-                   f"企信查 v1.1.0\n包名：com.qxx.johnny\n目标：Android 12–16\n\n"
+                   f"企信查 v1.2.0\n包名：com.qxx.johnny\n目标：Android 12–16\n\n"
                    f"类「天眼查」风格企业信息检索学习作品。\n\n"
                    f"开发者：{legal.AUTHOR}\n微信：{legal.WECHAT}\n"
                    f"邮箱：{legal.EMAIL}\n版权所有 © {legal.COPYRIGHT_YEAR}",
@@ -453,41 +421,40 @@ class ProfileScreen(Screen):
         info_popup("免责声明", legal.DISCLAIMER, btn_text="我知道了", emoji="⚠️")
 
 
-# ──────────────────────────
-#  API密钥配置页 (从"我的"跳转)
-# ──────────────────────────
+# ═══════════════════════════
+#  API密钥配置页
+# ═══════════════════════════
 class ApiConfigScreen(Screen):
     def __init__(self, **kw):
         super().__init__(**kw)
         self.name = "api_config"
-        root = BoxLayout(orientation="vertical", padding=[0, 10, 0, 0])
-        # 返回标题栏
-        hdr = BoxLayout(size_hint_y=None, height=46, padding=[12, 8])
+        root = BoxLayout(orientation="vertical", padding=[0, 8, 0, 0])
+        # 返回栏
+        hdr = BoxLayout(size_hint_y=None, height=44, padding=[12, 6])
         back = CuteButton(text="←", bg=C(PALETTE["sub"]), size_hint_x=0.2,
-                          height=38, radius=14)
+                          height=36, radius=14)
         back.bind(on_press=lambda x: setattr(self.manager, "current", "profile"))
         hdr.add_widget(back)
         hdr.add_widget(lab("🔑 API密钥管理", font_size=18, bold=True,
-                           color=C(PALETTE["text"]), halign="left", valign="middle"))
+                           halign="left", valign="middle"))
         root.add_widget(hdr)
 
         sv = ScrollView()
         inner = BoxLayout(orientation="vertical", size_hint_y=None,
-                          padding=[14, 10], spacing=8)
+                          padding=[12, 8], spacing=6)
         inner.bind(minimum_height=inner.setter("height"))
 
-        # 说明文字（自适应宽度）
+        # 说明（自适应宽度）
         tip = lab("在以下免费平台注册后填入 key：\n"
                   "· apibyte.cn（工商基础）\n"
                   "· xxapi.cn（股东/变更）\n"
-                  "· jisuapi.com（工商/股东/变更/高管，字段极全）\n"
-                  "· juhe.cn（对外投资/经营异常/行政处罚/商标/专利等）\n"
-                  "· openapi.tianyancha.com（分支，需申请）\n"
-                  "· openapi.qcc.com（全维度，需企业认证）",
-                  font_size=13, color=C(PALETTE["sub"]),
-                  size_hint_y=None)
-        tip.bind(texture_size=lambda i, s: setattr(i, "height", s[1] + 8))
-        inner.bind(width=lambda i, w: setattr(tip, "text_size", (w - 28, None)))
+                  "· jisuapi.com（字段极全）\n"
+                  "· juhe.cn（31维度全）\n"
+                  "· openapi.tianyancha.com（分支）\n"
+                  "· openapi.qcc.com（全维度）",
+                  font_size=13, color=C(PALETTE["sub"]), size_hint_y=None)
+        tip.bind(texture_size=lambda i, s: setattr(i, "height", s[1] + 6))
+        inner.bind(width=lambda i, w: setattr(tip, "text_size", (w - 24, None)))
         inner.add_widget(tip)
 
         cfg = load_config()
@@ -495,20 +462,19 @@ class ApiConfigScreen(Screen):
         for label, key in [("apibyte key", "apibyte_key"),
                            ("xxapi key", "xxapi_key"),
                            ("jisuapi key", "jisuapi_key"),
-                           ("聚合数据 key (juhe)", "juhe_key"),
-                           ("天眼查开放 key", "tianyancha_key"),
+                           ("聚合数据 key", "juhe_key"),
+                           ("天眼查 key", "tianyancha_key"),
                            ("企查查 key", "qcc_key")]:
-            lbl = lab(label, font_size=13, color=C(PALETTE["text"]),
-                      size_hint_y=None, height=20)
+            lbl = lab(label, font_size=13, size_hint_y=None, height=18)
             lbl.bind(width=lambda i, w: setattr(lbl, "text_size", (w, None)))
             inner.add_widget(lbl)
             ti = CuteInput(text=cfg.get(key, ""), multiline=False,
-                           size_hint_y=None, height=42)
+                           size_hint_y=None, height=40)
             self.fields[key] = ti
             inner.add_widget(ti)
 
-        save = CuteButton(text="💾 保存设置", bg=C(PALETTE["primary"]),
-                          size_hint_y=None, height=48, radius=14)
+        save = CuteButton(text="💾 保存", bg=C(PALETTE["primary"]),
+                          size_hint_y=None, height=44, radius=14)
         save.bind(on_press=lambda x: self._save())
         inner.add_widget(save)
 
@@ -523,53 +489,52 @@ class ApiConfigScreen(Screen):
         self.manager.current = "profile"
 
 
-# ──────────────────────────
-#  自定义数据源配置页 (从"我的"跳转)
-# ──────────────────────────
+# ═══════════════════════════
+#  自定义数据源配置页
+# ═══════════════════════════
 class CustomConfigScreen(Screen):
     def __init__(self, **kw):
         super().__init__(**kw)
         self.name = "custom_config"
-        root = BoxLayout(orientation="vertical", padding=[0, 10, 0, 0])
-        hdr = BoxLayout(size_hint_y=None, height=46, padding=[12, 8])
+        root = BoxLayout(orientation="vertical", padding=[0, 8, 0, 0])
+        hdr = BoxLayout(size_hint_y=None, height=44, padding=[12, 6])
         back = CuteButton(text="←", bg=C(PALETTE["sub"]), size_hint_x=0.2,
-                          height=38, radius=14)
+                          height=36, radius=14)
         back.bind(on_press=lambda x: setattr(self.manager, "current", "profile"))
         hdr.add_widget(back)
         hdr.add_widget(lab("➕ 自定义数据源", font_size=18, bold=True,
-                           color=C(PALETTE["text"]), halign="left", valign="middle"))
+                           halign="left", valign="middle"))
         root.add_widget(hdr)
 
         sv = ScrollView()
         inner = BoxLayout(orientation="vertical", size_hint_y=None,
-                          padding=[14, 10], spacing=8)
+                          padding=[12, 8], spacing=6)
         inner.bind(minimum_height=inner.setter("height"))
 
-        tip = lab("接入你自己在官网申请的任意接口，用于工商基础查询。",
+        tip = lab("接入你自己的API接口，用于工商基础查询。",
                   font_size=13, color=C(PALETTE["sub"]),
-                  size_hint_y=None, height=26)
-        tip.bind(width=lambda i, w: setattr(tip, "text_size", (w - 28, None)))
+                  size_hint_y=None, height=22)
+        tip.bind(width=lambda i, w: setattr(tip, "text_size", (w - 24, None)))
         inner.add_widget(tip)
 
         cfg = load_config()
-        cfg_custom = (cfg.get("custom_apis") or [{}])[0]
+        cc = (cfg.get("custom_apis") or [{}])[0]
         self.cust = {}
         for clabel, ckey in [("名称", "name"),
-                             ("接口URL（用 {kw} 占位企业名）", "url"),
+                             ("接口URL（{kw}占位企业名）", "url"),
                              ("API Key", "key"),
-                             ("请求头模板（如 Authorization: Bearer {key}）", "header"),
-                             ("字段映射JSON（如 {\"name\":\"data.name\"}）", "mapping")]:
-            lbl = lab(clabel, font_size=13, color=C(PALETTE["text"]),
-                      size_hint_y=None, height=20)
+                             ("请求头模板", "header"),
+                             ("字段映射JSON", "mapping")]:
+            lbl = lab(clabel, font_size=13, size_hint_y=None, height=18)
             lbl.bind(width=lambda i, w: setattr(lbl, "text_size", (w, None)))
             inner.add_widget(lbl)
-            ti = CuteInput(text=str(cfg_custom.get(ckey, "")), multiline=False,
-                           size_hint_y=None, height=42)
+            ti = CuteInput(text=str(cc.get(ckey, "")), multiline=False,
+                           size_hint_y=None, height=40)
             self.cust[ckey] = ti
             inner.add_widget(ti)
 
         csave = CuteButton(text="💾 保存自定义源", bg=C(PALETTE["mint"]),
-                           size_hint_y=None, height=48, radius=14)
+                           size_hint_y=None, height=44, radius=14)
         csave.bind(on_press=lambda x: self._save_custom())
         inner.add_widget(csave)
 
@@ -587,28 +552,27 @@ class CustomConfigScreen(Screen):
         self.manager.current = "profile"
 
 
-# ──────────────────────────
+# ═══════════════════════════
 #  企业详情页
-# ──────────────────────────
+# ═══════════════════════════
 class DetailScreen(Screen):
     def __init__(self, **kw):
         super().__init__(**kw)
         self.name = "detail"
-        self.root_layout = BoxLayout(orientation="vertical", padding=[0, 10, 0, 0])
-        top = BoxLayout(size_hint_y=None, height=46, padding=[12, 8])
+        self.root_layout = BoxLayout(orientation="vertical", padding=[0, 8, 0, 0])
+        top = BoxLayout(size_hint_y=None, height=44, padding=[12, 6])
         back = CuteButton(text="← 返回", bg=C(PALETTE["sub"]),
-                          size_hint_x=0.35, height=40, radius=14)
+                          size_hint_x=0.35, height=38, radius=14)
         back.bind(on_press=lambda x: setattr(self.manager, "current", "search"))
         title = lab("🔎 企业详情", font_size=18, bold=True,
-                   color=C(PALETTE["primary_d"]),
-                   halign="center", valign="center")
+                    color=C(PALETTE["primary_d"]), halign="center", valign="middle")
         top.add_widget(back)
         top.add_widget(title)
         self.root_layout.add_widget(top)
 
         self.sv = ScrollView()
         self.body = BoxLayout(orientation="vertical", size_hint_y=None,
-                              padding=[10, 4], spacing=10)
+                              padding=[8, 4], spacing=8)
         self.body.bind(minimum_height=self.body.setter("height"))
         self.sv.add_widget(self.body)
         self.root_layout.add_widget(self.sv)
@@ -628,31 +592,27 @@ class DetailScreen(Screen):
             d, err = None, str(e)
         Clock.schedule_once(lambda dt: self._render(name, d, err))
 
-    def _section(self, key, title, rows, source=""):
+    def _sec_card(self, key, title, rows, source=""):
         emoji = EMOJI.get(key, "📌")
-        card = CuteCard(padding=[14, 10], spacing=4, size_hint_y=None)
+        card = CuteCard(padding=[12, 8], spacing=4, size_hint_y=None)
         card.bind(minimum_height=card.setter("height"))
         hdr = f"{title}   · 源：{source}" if source else title
-        hdr_lbl = lab(f"{emoji} {hdr}", font_size=15, bold=True,
-                      color=C(PALETTE["primary_d"]),
-                      size_hint_y=None, height=24)
-        hdr_lbl.bind(texture_size=lambda i, s: setattr(i, "height", s[1]))
-        card.bind(width=lambda i, w: setattr(hdr_lbl, "text_size", (w - 28, None)))
-        card.add_widget(hdr_lbl)
+        hl = lab(f"{emoji} {hdr}", font_size=15, bold=True,
+                 color=C(PALETTE["primary_d"]), size_hint_y=None)
+        hl.bind(texture_size=lambda i, s: setattr(i, "height", max(s[1], 22)))
+        card.bind(width=lambda i, w: setattr(hl, "text_size", (w - 24, None)))
+        card.add_widget(hl)
         if not rows:
-            no_lbl = lab("· 暂无数据（未配置对应数据源 / 爬虫未命中）",
-                        font_size=13, color=C(PALETTE["sub"]),
-                        size_hint_y=None)
-            no_lbl.bind(texture_size=lambda i, s: setattr(i, "height", s[1] + 4))
-            card.bind(width=lambda i, w: setattr(no_lbl, "text_size", (w - 28, None)))
-            card.add_widget(no_lbl)
+            nl = lab("· 暂无数据", font_size=13, color=C(PALETTE["sub"]),
+                     size_hint_y=None)
+            nl.bind(texture_size=lambda i, s: setattr(i, "height", max(s[1], 18)))
+            card.bind(width=lambda i, w: setattr(nl, "text_size", (w - 24, None)))
+            card.add_widget(nl)
         for r in rows:
-            r_lbl = lab("· " + str(r), font_size=14,
-                        color=C(PALETTE["text"]),
-                        size_hint_y=None)
-            r_lbl.bind(texture_size=lambda i, s: setattr(i, "height", s[1] + 2))
-            card.bind(width=lambda i, w: setattr(r_lbl, "text_size", (w - 28, None)))
-            card.add_widget(r_lbl)
+            rl = lab("· " + str(r), font_size=14, size_hint_y=None)
+            rl.bind(texture_size=lambda i, s: setattr(i, "height", max(s[1], 18)))
+            card.bind(width=lambda i, w: setattr(rl, "text_size", (w - 24, None)))
+            card.add_widget(rl)
         self.body.add_widget(card)
 
     def _render(self, name, d, err):
@@ -662,29 +622,28 @@ class DetailScreen(Screen):
                                      color=C(PALETTE["danger"]),
                                      size_hint_y=None, height=30))
             return
+        # 数据源 banner
         src = d.get("sources") or []
-        banner = "当前数据源：" + ("、".join(src) if src
-                                   else "无（未配置 key，已兜底网页抓取）")
+        banner = "当前数据源：" + ("、".join(src) if src else "兜底网页抓取")
         bcard = CuteCard(bg=C(PALETTE["chip"]), border=C(PALETTE["primary"]),
-                         padding=[12, 8], spacing=4, size_hint_y=None)
+                         padding=[10, 6], spacing=4, size_hint_y=None)
         bcard.bind(minimum_height=bcard.setter("height"))
-        b_lbl = lab("📡 " + banner, font_size=14, bold=True,
-                     color=C(PALETTE["primary_d"]),
-                     size_hint_y=None)
-        b_lbl.bind(texture_size=lambda i, s: setattr(i, "height", s[1] + 4))
-        bcard.bind(width=lambda i, w: setattr(b_lbl, "text_size", (w - 24, None)))
-        bcard.add_widget(b_lbl)
+        bl = lab("📡 " + banner, font_size=14, bold=True,
+                 color=C(PALETTE["primary_d"]), size_hint_y=None)
+        bl.bind(texture_size=lambda i, s: setattr(i, "height", max(s[1], 20)))
+        bcard.bind(width=lambda i, w: setattr(bl, "text_size", (w - 20, None)))
+        bcard.add_widget(bl)
         self.body.add_widget(bcard)
 
+        # 基础信息
         b = d.get("basic") or {}
-        card = CuteCard(padding=[14, 10], spacing=4, size_hint_y=None)
+        card = CuteCard(padding=[12, 8], spacing=4, size_hint_y=None)
         card.bind(minimum_height=card.setter("height"))
-        n_lbl = lab(b.get("name", name), font_size=18, bold=True,
-                    color=C(PALETTE["text"]),
-                    size_hint_y=None)
-        n_lbl.bind(texture_size=lambda i, s: setattr(i, "height", s[1] + 4))
-        card.bind(width=lambda i, w: setattr(n_lbl, "text_size", (w - 28, None)))
-        card.add_widget(n_lbl)
+        nl = lab(b.get("name", name), font_size=18, bold=True, size_hint_y=None)
+        nl.bind(texture_size=lambda i, s: setattr(i, "height", max(s[1], 24)))
+        card.bind(width=lambda i, w: setattr(nl, "text_size", (w - 24, None)))
+        card.add_widget(nl)
+
         pairs = [
             ("法定代表人", b.get("legal_person")),
             ("注册资本", b.get("reg_capital")),
@@ -707,48 +666,41 @@ class DetailScreen(Screen):
         ]
         for k, v in pairs:
             if v:
-                v_lbl = lab(f"{k}：{v}", font_size=14,
-                            color=C(PALETTE["text"]),
-                            size_hint_y=None)
-                v_lbl.bind(texture_size=lambda i, s: setattr(i, "height", s[1] + 2))
-                card.bind(width=lambda i, w: setattr(v_lbl, "text_size", (w - 28, None)))
-                card.add_widget(v_lbl)
+                vl = lab(f"{k}：{v}", font_size=14, size_hint_y=None)
+                vl.bind(texture_size=lambda i, s: setattr(i, "height", max(s[1], 18)))
+                card.bind(width=lambda i, w: setattr(vl, "text_size", (w - 24, None)))
+                card.add_widget(vl)
         self.body.add_widget(card)
 
         ms = d.get("module_sources", {})
-        self._section("shareholders",
-                      "股东信息",
-                      [f"{s.get('name')}（出资比例 {s.get('ratio')}，金额 {s.get('amount')}）"
-                       for s in d.get("shareholders", [])], ms.get("shareholders", ""))
-        self._section("changes",
-                      "变更记录",
-                      [f"{c.get('item')} @ {c.get('time')}" for c in d.get("changes", [])],
-                      ms.get("changes", ""))
-        self._section("key_persons",
-                      "主要人员",
-                      [f"{p.get('name')}（{p.get('position')}）"
-                       for p in d.get("key_persons", [])], ms.get("key_persons", ""))
-        self._section("investments",
-                      "对外投资",
-                      [f"{i.get('name')}（持股 {i.get('ratio')}）"
-                       for i in d.get("investments", [])], ms.get("investments", ""))
-        self._section("branches",
-                      "分支机构",
-                      [br.get("name", "") for br in d.get("branches", [])],
-                      ms.get("branches", ""))
+        self._sec_card("shareholders", "股东信息",
+                       [f"{s.get('name')}（{s.get('ratio')}，{s.get('amount')}）"
+                        for s in d.get("shareholders", [])], ms.get("shareholders", ""))
+        self._sec_card("changes", "变更记录",
+                       [f"{c.get('item')} @ {c.get('time')}" for c in d.get("changes", [])],
+                       ms.get("changes", ""))
+        self._sec_card("key_persons", "主要人员",
+                       [f"{p.get('name')}（{p.get('position')}）"
+                        for p in d.get("key_persons", [])], ms.get("key_persons", ""))
+        self._sec_card("investments", "对外投资",
+                       [f"{i.get('name')}（{i.get('ratio')}）"
+                        for i in d.get("investments", [])], ms.get("investments", ""))
+        self._sec_card("branches", "分支机构",
+                       [br.get("name", "") for br in d.get("branches", [])],
+                       ms.get("branches", ""))
         for key, title, _, _ in JUHE_DIMENSIONS:
-            self._section(key, title, d.get("dims", {}).get(key, []), ms.get(key, ""))
+            self._sec_card(key, title, d.get("dims", {}).get(key, []), ms.get(key, ""))
 
 
-# ──────────────────────────
+# ═══════════════════════════
 #  底部导航栏 + App 入口
-# ──────────────────────────
+# ═══════════════════════════
+TABS = [("🔍", "搜索", "search"),
+        ("⭐", "关注", "follow"),
+        ("📊", "对比", "compare"),
+        ("👤", "我的", "profile")]
+
 class QXApp(App):
-    FONT = FONT
-    tabs = [("🔍", "搜索", "search"),
-            ("⭐", "关注", "follow"),
-            ("📊", "对比", "compare"),
-            ("👤", "我的", "profile")]
     current_tab = "search"
 
     def build(self):
@@ -762,50 +714,54 @@ class QXApp(App):
         self.sm.add_widget(ApiConfigScreen())
         self.sm.add_widget(CustomConfigScreen())
 
-        # 根容器：ScreenManager + 底部导航栏
+        # ── 根容器 ──
         root = BoxLayout(orientation="vertical")
         root.add_widget(self.sm)
 
-        # 底部导航栏
-        nav_bar = BoxLayout(size_hint_y=None, height=56,
-                            padding=[4, 4, 4, 4], spacing=2)
-        # 绘制白色背景
-        from kivy.graphics import Color, Rectangle
-        with nav_bar.canvas.before:
+        # ── 底部导航栏 ──
+        nav = BoxLayout(size_hint_y=None, height=56, spacing=0, padding=[0, 0, 0, 2])
+        with nav.canvas.before:
             Color(*C(PALETTE["nav_bg"]))
-            self._nav_rect = Rectangle(pos=nav_bar.pos, size=nav_bar.size)
-        nav_bar.bind(pos=lambda i, p: setattr(self._nav_rect, "pos", p),
-                     size=lambda i, s: setattr(self._nav_rect, "size", s))
-        # 上边分割线
-        with nav_bar.canvas.before:
+            self._nav_bg = Rectangle(pos=nav.pos, size=nav.size)
             Color(*C(PALETTE["line"]))
-            self._nav_line = Rectangle(pos=(nav_bar.pos[0], nav_bar.pos[1] + nav_bar.size[1] - 1),
-                                        size=(nav_bar.size[0], 1))
-        nav_bar.bind(pos=lambda i, p: setattr(self._nav_line, "pos", (p[0], p[1] + i.height - 1)),
-                     size=lambda i, s: setattr(self._nav_line, "size", (s[0], 1)))
+            self._nav_line = Rectangle(
+                pos=(nav.pos[0], nav.pos[1] + nav.size[1] - 1),
+                size=(nav.size[0], 1))
+        nav.bind(pos=lambda i, p: setattr(self._nav_bg, "pos", p),
+                 size=lambda i, s: setattr(self._nav_bg, "size", s))
 
-        self.nav_btns = []
-        for emoji, text, screen_name in self.tabs:
-            btn_box = BoxLayout(orientation="vertical", spacing=1,
-                                size_hint_x=0.25)
-            e_lbl = Label(text=emoji, font_size=22,
-                         color=C(PALETTE["nav_on"]) if screen_name == "search"
-                         else C(PALETTE["nav_off"]),
-                         halign="center", valign="middle", size_hint_y=None, height=30)
-            t_lbl = Label(text=text, font_size=12, font_name=FONT,
-                         color=C(PALETTE["nav_on"]) if screen_name == "search"
-                         else C(PALETTE["nav_off"]),
-                         halign="center", valign="middle", size_hint_y=None, height=18)
-            btn_box.add_widget(e_lbl)
-            btn_box.add_widget(t_lbl)
-            btn_box.bind(on_touch_down=lambda inst, touch, sn=screen_name: (
-                self._switch_tab(sn) if inst.collide_point(*touch.pos) else None))
-            self.nav_btns.append((emoji, text, screen_name, e_lbl, t_lbl))
-            nav_bar.add_widget(btn_box)
-        root.add_widget(nav_bar)
+        self.nav_tabs = []
+        for emoji, text, sn in TABS:
+            box = BoxLayout(orientation="vertical", spacing=2,
+                            size_hint_x=0.25, padding=[0, 6, 0, 4])
+            e_lbl = Label(**_font_kw(text=emoji, font_size=22),
+                         color=C(PALETTE["nav_on"]) if sn == "search" else C(PALETTE["nav_off"]),
+                         halign="center", valign="middle",
+                         size_hint_y=None, height=28)
+            t_lbl = Label(**_font_kw(text=text, font_size=11),
+                         color=C(PALETTE["nav_on"]) if sn == "search" else C(PALETTE["nav_off"]),
+                         halign="center", valign="middle",
+                         size_hint_y=None, height=16)
+            box.add_widget(e_lbl)
+            box.add_widget(t_lbl)
+            self.nav_tabs.append((sn, e_lbl, t_lbl))
+            nav.add_widget(box)
 
-        # 监听 ScreenManager 切换，更新导航栏选中态
-        self.sm.bind(current=self._on_screen_change)
+        # 导航栏触摸事件（安全方式）
+        def _nav_touch(inst, touch):
+            if touch.is_mouse_scrolling:
+                return False
+            for sn, e_lbl, t_lbl in self.nav_tabs:
+                if e_lbl.parent and e_lbl.parent.collide_point(*touch.pos):
+                    self._switch(sn)
+                    return True
+            return False
+        nav.bind(on_touch_down=_nav_touch)
+
+        root.add_widget(nav)
+
+        # 监听 Screen 切换
+        self.sm.bind(current=self._on_screen)
 
         # 首次启动弹免责声明
         cfg = load_config()
@@ -813,26 +769,26 @@ class QXApp(App):
             Clock.schedule_once(lambda dt: info_popup(
                 "数据来源与免责声明", legal.DISCLAIMER,
                 btn_text="我已阅读并同意", emoji="📢",
-                on_close=_mark_agreed), 0.4)
+                on_close=_mark_agreed), 0.5)
         return root
 
-    def _switch_tab(self, screen_name):
-        if screen_name in ("search", "follow", "compare", "profile"):
-            self.sm.current = screen_name
-            self.current_tab = screen_name
+    def _switch(self, sn):
+        if sn in ("search", "follow", "compare", "profile"):
+            self.sm.current = sn
+            self.current_tab = sn
+            self._update_nav(sn)
 
-    def _on_screen_change(self, sm, screen_name):
-        # 映射子页面到对应 tab
-        tab_map = {
-            "search": "search", "follow": "follow",
-            "compare": "compare", "profile": "profile",
-            "detail": "search", "api_config": "profile",
-            "custom_config": "profile",
-        }
-        active_tab = tab_map.get(screen_name, "search")
-        self.current_tab = active_tab
-        for emoji, text, sn, e_lbl, t_lbl in self.nav_btns:
-            if sn == active_tab:
+    def _on_screen(self, sm, screen_name):
+        tab_map = {"search": "search", "follow": "follow",
+                   "compare": "compare", "profile": "profile",
+                   "detail": "search", "api_config": "profile",
+                   "custom_config": "profile"}
+        active = tab_map.get(screen_name, "search")
+        self._update_nav(active)
+
+    def _update_nav(self, active):
+        for sn, e_lbl, t_lbl in self.nav_tabs:
+            if sn == active:
                 e_lbl.color = C(PALETTE["nav_on"])
                 t_lbl.color = C(PALETTE["nav_on"])
             else:
