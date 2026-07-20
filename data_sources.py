@@ -4,8 +4,12 @@
 优先使用免费 API（用户填 key），全部失败走免 key 兜底（88查网页解析）。
 支持「自定义 API」：用户可自行接入任意官网申请的接口。
 所有函数返回统一结构，便于 UI 直接渲染。
+
+作者：文强哥 / Johnny520  (GitHub: Johnny520)
+版本：v1.4.0
 """
 import json
+import time
 import requests
 from urllib.parse import urlencode
 from config import load_config
@@ -34,11 +38,27 @@ def _cfg():
     return load_config()
 
 
-def _get(url, params=None, headers=None, timeout=12):
+def _get(url, params=None, headers=None, timeout=12, retries=2):
+    """带超时与指数退避重试的 GET 请求。
+
+    仅对网络瞬时故障（超时 / 连接错误）重试，最多 retries 次；
+    4xx/5xx 等响应不重试，直接由调用方 try/except 兜底返回 None。
+    若重试耗尽仍失败，抛出最后一次异常（上层统一捕获）。
+    """
     h = dict(HEADERS)
     if headers:
         h.update(headers)
-    return requests.get(url, params=params, headers=h, timeout=timeout)
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            return requests.get(url, params=params, headers=h, timeout=timeout)
+        except requests.exceptions.RequestException as e:
+            last_err = e
+            if attempt < retries:
+                time.sleep(min(0.5 * (2 ** attempt), 3))
+    if last_err is not None:
+        raise last_err
+    raise RuntimeError("请求失败（未知原因）")
 
 
 # ============ 源1: apibyte 工商基础 ============

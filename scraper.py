@@ -8,8 +8,12 @@
 
 如需接入更多稳定的免费公开源，在本文件追加函数并注册到 _SOURCES 即可，
 data_sources 会自动复用。
+
+作者：文强哥 / Johnny520  (GitHub: Johnny520)
+版本：v1.4.0
 """
 import re
+import time
 import requests
 from urllib.parse import quote
 
@@ -24,9 +28,20 @@ HEADERS = {
 TIMEOUT = 12
 
 
-def _get(url, params=None, timeout=TIMEOUT):
+def _get(url, params=None, timeout=TIMEOUT, retries=1):
+    """带超时与退避重试的 GET（best-effort 兜底，默认仅重试 1 次，快速失败）。"""
     h = dict(HEADERS)
-    return requests.get(url, params=params, headers=h, timeout=timeout)
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            return requests.get(url, params=params, headers=h, timeout=timeout)
+        except requests.exceptions.RequestException as e:
+            last_err = e
+            if attempt < retries:
+                time.sleep(min(0.5 * (attempt + 1), 2))
+    if last_err is not None:
+        raise last_err
+    raise RuntimeError("请求失败（未知原因）")
 
 
 def _strip_tags(html):
